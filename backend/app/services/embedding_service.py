@@ -1,0 +1,186 @@
+import asyncio
+import logging
+from typing import List
+import numpy as np
+
+logger = logging.getLogger(__name__)
+
+# Global model instance
+_model = None
+_model_name = "all-MiniLM-L6-v2"
+
+def get_model():
+    """Get or create the Sentence-BERT model instance"""
+    global _model
+    if _model is None:
+        try:
+            from sentence_transformers import SentenceTransformer
+            logger.info(f"Loading Sentence-BERT model: {_model_name}")
+            _model = SentenceTransformer(_model_name)
+            logger.info("Sentence-BERT model loaded successfully")
+        except Exception as e:
+            logger.error(f"Failed to load Sentence-BERT model: {e}")
+            # Fallback to dummy embeddings for development
+            _model = None
+    return _model
+
+async def generate_embedding(text: str) -> List[float]:
+    """
+    Generate embedding for text using Sentence-BERT
+    
+    Args:
+        text: Input text (e.g., hobbies description)
+        
+    Returns:
+        List of floats representing the text embedding
+    """
+    try:
+        # Get the model
+        model = get_model()
+        
+        if model is None:
+            # Fallback to dummy embeddings for development
+            logger.warning("Using dummy embeddings - Sentence-BERT not available")
+            return [0.1] * 384  # Standard dimension for all-MiniLM-L6-v2
+        
+        # Run embedding generation in thread pool to avoid blocking
+        loop = asyncio.get_event_loop()
+        embedding = await loop.run_in_executor(
+            None, 
+            lambda: model.encode(text, convert_to_tensor=False)
+        )
+        
+        # Convert to list of floats
+        embedding_list = embedding.tolist()
+        
+        logger.debug(f"Generated embedding of dimension {len(embedding_list)} for text: {text[:50]}...")
+        
+        return embedding_list
+        
+    except Exception as e:
+        logger.error(f"Error generating embedding: {e}")
+        # Fallback to dummy embeddings
+        return [0.1] * 384
+
+async def generate_embeddings_batch(texts: List[str]) -> List[List[float]]:
+    """
+    Generate embeddings for multiple texts in batch
+    
+    Args:
+        texts: List of input texts
+        
+    Returns:
+        List of embeddings
+    """
+    try:
+        model = get_model()
+        
+        if model is None:
+            # Fallback to dummy embeddings for development
+            logger.warning("Using dummy embeddings - Sentence-BERT not available")
+            return [[0.1] * 384 for _ in texts]
+        
+        loop = asyncio.get_event_loop()
+        embeddings = await loop.run_in_executor(
+            None,
+            lambda: model.encode(texts, convert_to_tensor=False)
+        )
+        
+        return embeddings.tolist()
+        
+    except Exception as e:
+        logger.error(f"Error generating batch embeddings: {e}")
+        # Fallback to dummy embeddings
+        return [[0.1] * 384 for _ in texts]
+
+async def calculate_similarity(embedding1: List[float], embedding2: List[float]) -> float:
+    """
+    Calculate cosine similarity between two embeddings
+    
+    Args:
+        embedding1: First embedding vector
+        embedding2: Second embedding vector
+        
+    Returns:
+        Similarity score between 0 and 1
+    """
+    try:
+        # Convert to numpy arrays
+        vec1 = np.array(embedding1)
+        vec2 = np.array(embedding2)
+        
+        # Calculate cosine similarity
+        similarity = np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2))
+        
+        return float(similarity)
+        
+    except Exception as e:
+        logger.error(f"Error calculating similarity: {e}")
+        return 0.0
+
+async def find_similar_hobbies(target_hobbies: str, all_hobbies: List[str], top_k: int = 5) -> List[tuple]:
+    """
+    Find hobbies similar to the target hobbies
+    
+    Args:
+        target_hobbies: Target hobbies text
+        all_hobbies: List of all hobbies to compare against
+        top_k: Number of top similar hobbies to return
+        
+    Returns:
+        List of tuples (hobbies_text, similarity_score)
+    """
+    try:
+        # Generate embedding for target hobbies
+        target_embedding = await generate_embedding(target_hobbies)
+        
+        # Generate embeddings for all hobbies
+        all_embeddings = await generate_embeddings_batch(all_hobbies)
+        
+        # Calculate similarities
+        similarities = []
+        for i, embedding in enumerate(all_embeddings):
+            similarity = await calculate_similarity(target_embedding, embedding)
+            similarities.append((all_hobbies[i], similarity))
+        
+        # Sort by similarity and return top_k
+        similarities.sort(key=lambda x: x[1], reverse=True)
+        return similarities[:top_k]
+        
+    except Exception as e:
+        logger.error(f"Error finding similar hobbies: {e}")
+        return []
+
+def get_embedding_dimension() -> int:
+    """Get the dimension of the embeddings generated by the model"""
+    model = get_model()
+    if model is None:
+        return 384  # Standard dimension for all-MiniLM-L6-v2
+    # Create a dummy embedding to get the dimension
+    try:
+        dummy_embedding = model.encode("test", convert_to_tensor=False)
+        return len(dummy_embedding)
+    except Exception:
+        return 384  # Fallback dimension
+
+async def preprocess_hobbies_text(text: str) -> str:
+    """
+    Preprocess hobbies text before embedding generation
+    
+    Args:
+        text: Raw hobbies text
+        
+    Returns:
+        Preprocessed text
+    """
+    # Basic preprocessing
+    text = text.strip().lower()
+    
+    # Remove extra whitespace
+    text = " ".join(text.split())
+    
+    # If text is empty, use a default
+    if not text:
+        text = "no hobbies specified"
+    
+    return text 

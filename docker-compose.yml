@@ -1,0 +1,85 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15
+    container_name: roommate_matcher_db
+    environment:
+      POSTGRES_DB: roommate_matcher
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - roommate_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d roommate_matcher"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # FastAPI Backend
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: roommate_matcher_backend
+    environment:
+      - DATABASE_URL=postgresql://user:password@postgres:5432/roommate_matcher
+      - PYTHONPATH=/app
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - ml_models:/app/ml_models
+      - data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - roommate_network
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # React Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: roommate_matcher_frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000
+    depends_on:
+      - backend
+    networks:
+      - roommate_network
+    command: npm start
+
+  # Redis for caching (optional, for future use)
+  redis:
+    image: redis:7-alpine
+    container_name: roommate_matcher_redis
+    ports:
+      - "6379:6379"
+    networks:
+      - roommate_network
+    volumes:
+      - redis_data:/data
+
+volumes:
+  postgres_data:
+  ml_models:
+  data:
+  redis_data:
+
+networks:
+  roommate_network:
+    driver: bridge 

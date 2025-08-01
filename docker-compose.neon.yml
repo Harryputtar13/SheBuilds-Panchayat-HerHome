@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  # FastAPI Backend (with Neon DB)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: roommate_matcher_backend_neon
+    environment:
+      # Use Neon DB URL from environment
+      - DATABASE_URL=${NEON_DATABASE_URL}
+      - NEON_DATABASE_URL=${NEON_DATABASE_URL}
+      - NEON_POOL_SIZE=${NEON_POOL_SIZE:-10}
+      - NEON_MAX_OVERFLOW=${NEON_MAX_OVERFLOW:-20}
+      - PYTHONPATH=/app
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - DEBUG=${DEBUG:-true}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - ml_models:/app/models
+      - data:/app/data
+    networks:
+      - roommate_network
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    restart: unless-stopped
+
+  # React Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: roommate_matcher_frontend_neon
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000
+      - REACT_APP_OMNIDIM_INTEGRATION=${REACT_APP_OMNIDIM_INTEGRATION:-true}
+    depends_on:
+      - backend
+    networks:
+      - roommate_network
+    command: npm start
+    restart: unless-stopped
+
+  # Redis for caching (optional, for future use)
+  redis:
+    image: redis:7-alpine
+    container_name: roommate_matcher_redis_neon
+    ports:
+      - "6379:6379"
+    networks:
+      - roommate_network
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+volumes:
+  ml_models:
+  data:
+  redis_data:
+
+networks:
+  roommate_network:
+    driver: bridge 
